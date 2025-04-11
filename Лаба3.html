@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <script>
+            
+
+let _data;
+let _blockSize;
+let _fileType; // 0 - encoded data, 1 - decoded data
+let _resultType; // 0 - encode, 1 - decode
+let _lastResult;
+
+const MAX_32BIT_INT = (~0) >>> 0;
+
+
+function randInt(from, to) {
+    return from + Math.floor(Math.random() * (to - from));
+}
+
+
+function randomBytes(count) {
+    let bytes = new Uint8Array(count);
+    for (let i = 0; i < count; i++) {
+        bytes[i] = randInt(0, 256);
+    }
+
+    return bytes;
+}
+
+
+function randPrimalityWitness(n) {
+    if (n < MAX_32BIT_INT)
+        return randInt(1, Number(n));
+
+    let arr = new Uint32Array(randomBytes(4));
+    return arr[0];
+}
+
+
+function extractNumberFromString(str) {
+    let result = "";
+    for (let char of str) {
+        if (char >= '0' && char <= '9')
+            result += char;
+    }
+
+    if (!result)
+        return null;
+
+    return BigInt(result);
+}
+
+
+function log2(n) {
+    let result = 0;
+    let curPow = 1n;
+
+    while (curPow < n) {
+        result++;
+        curPow = curPow << 1n;
+    }
+
+    return result;
+}
+
+
+function fastpow(x, pow, mod) {
+    let result = 1n;
+    let curPow = x;
+
+    while (pow > 0) {
+        if ((pow & 1n) == 1) {
+            result = (result * curPow) % mod;
+        }
+
+        curPow = (curPow * curPow) % mod;
+        pow >>= 1n;
+    }
+
+    return result;
+}
+
+
+function testMillerRabin(n) {
+    let s = 0;
+    let d = n - 1n;
+
+    while ((d & 1n) == 0) {
+        s++;
+        d = d >> 1n;
+    }
+
+    let roundsCount = log2(n);
+    let nminus1 = n - 1n;
+    for (let i = 0; i < roundsCount; i++) {
+        let a = randPrimalityWitness(n);
+        let x = fastpow(a, d, n)
+        if (x == 1 || x == nminus1)
+            continue;
+
+        let isComposite = true;
+        for (let j = 1; j <= s; j++) {
+            x = (x * x) % n;
+            if (x == nminus1) {
+                isComposite = false;
+                break;
+            }
+        }
+
+        if (isComposite)
+            return false;
+    }
+
+    return true;
+}
+
+
+function isPrime(n) {
+    n = Number(n);
+    let sqrtN = Math.floor(Math.sqrt(n));
+
+    for (let i = 2; i <= sqrtN; i++) {
+        if (n % i == 0)
+            return false;
+    }
+
+    return true;
+}
+
+
+function extendedGCD(a, b) {
+    let x0 = 1n, x1 = 0n, y0 = 0n, y1 = 1n;
+    while (b > 0) {
+        let q = a / b;
+        let temp = a;
+        a = b;
+        b = temp % b;
+
+        temp = x0;
+        x0 = x1;
+        x1 = temp - x1 * q;
+
+        temp = y0;
+        y0 = y1;
+        y1 = temp - y1 * q;
+    }   
+
+    return [x0, y0];
+}
+
+
+function rabinEncode(p, q, b, data) {
+    let n = p * q;
+    let result = new Array(data.length);
+    for (let i = 0; i < result.length; i++) {
+        let mi = BigInt(data[i]);
+        result[i] = (mi * (mi + b)) % n;
+    }
+
+    return result;
+}
+
+
+function rabinDecode(p, q, b, data) {
+    let n = p * q;
+    let result = [];
+
+    let d = new Array(4);
+    for (let block of data) {
+        let discriminant = (b * b + 4n * BigInt(block)) % n;
+        let mp = fastpow(discriminant, (p + 1n) >> 2n, p);
+        let mq = fastpow(discriminant, (q + 1n) >> 2n, q);
+        let [yp, yq] = extendedGCD(p, q);
+    
+        let pypmq = p * yp * mq;
+        let qyqmp = q * yq * mp;
+        
+        d[0] = (pypmq + qyqmp) % n
+        d[1] = n - d[0];
+        d[2] = (pypmq - qyqmp) % n;
+        d[3] = n - d[2];
+    
+        let m = null;
+        for (let root of d) {
+            if (((root - b) & 1n) == 0)
+                m = ((root - b) >> 1n) % n;
+            else
+                m = ((root - b + n) >> 1n) % n;
+    
+            if (m < 0)
+                m = m + n;
+
+            if (m < 256)
+                break;
+        }
+    
+        if (m == null)
+            throw new Error("Can't decode byte");
+
+        result.push(m);
+    }
+
+    return result;
+}
+
+
+function run(clickEvent) {
+    let p = extractNumberFromString(document.getElementById("p").value);
+    let q = extractNumberFromString(document.getElementById("q").value);
+
+    if (p === null) {
+        alert(`Сори гудбай! Введите p`);
+        return;
+    }
+
+    if (q === null) {
+        alert(`Сори гудбай! Введите q`);
+        return;
+    }
+
+    if ((p & 3n) != 3) {
+        alert(`Сори гудбай! Условие p = 3 (mod 4) не выполняется`);
+        return;
+    }
+
+    if ((q & 3n) != 3) {
+        alert(`Сори гудбай! Условие q = 3 (mod 4) не выполняется`);
+        return;
+    }
+
+    if (!isPrime(p)) {
+        alert(`Сори гудбай! p - не простое`);
+        return;
+    }
+
+    if (!isPrime(q)) {
+        alert(`Сори гудбай! q - не простое`);
+        return;
+    }
+
+    let n = p * q;
+
+    let b = extractNumberFromString(document.getElementById("b").value);
+    if (b === null) {
+        alert(`Сори гудбай! Введите b`);
+        return;
+    }
+
+    if (b >= n) {
+        alert(`Сори гудбай! Условие b < p * q не выполняется`);
+        return;
+    }
+
+    _blockSize = (log2(n) + 7) >> 3;
+
+    if (clickEvent.target.id == "encode_button") {
+        _resultType = 0;
+        _lastResult = rabinEncode(p, q, b, _data);
+    } else {
+        _resultType = 1;
+        _lastResult = rabinDecode(p, q, b, _data);
+    }
+
+    let resultTextInput = document.getElementById("result_text");
+    resultTextInput.value = _lastResult.join(" ");
+}
+
+
+function getDataForEncode(fileReaderResult) {
+    return new Uint8Array(fileReaderResult);
+}
+
+
+function getDataForDecode(fileReaderResult) {
+    let uint8arr = new Uint8Array(fileReaderResult);
+    let blockSize = uint8arr[0];
+    let numbersCount = (uint8arr.length - 1) / blockSize;
+    let result = [];
+
+    let curIndex = 1;
+    for (let i = 0; i < numbersCount; i++) {
+        let x = 0n;
+        let shift = 0n;
+
+        for (let j = 0; j < blockSize; j++) {
+            x = x | (BigInt(uint8arr[curIndex]) << shift);
+            shift += 8n;
+            curIndex++;
+        }
+
+        result.push(x);
+    }
+
+    return result;
+}
+
+
+function setDataFromFile(event) {
+    let filesList = event.target.files;
+    if (filesList.length == 0)
+        return;
+
+    let file = filesList[0];
+    event.target.value = null;
+    
+    let reader = new FileReader();
+    reader.readAsArrayBuffer(file);
+    reader.onload = function() {
+        let textInput = document.getElementById("plain_or_cipher_text");
+
+        if (_fileType == 0)
+            _data = getDataForEncode(reader.result);
+        else if (_fileType == 1)
+            _data = getDataForDecode(reader.result);
+
+        textInput.value = _data.join(" ");
+    };
+    
+    reader.onerror = function() {
+        console.log(reader.error);
+    }
+}
+
+
+function getEncodedDataToSave() {
+    let resultArray = new Uint8Array(_lastResult.length * _blockSize + 1);
+    resultArray[0] = _blockSize;
+
+    let curIndex = 1;
+    for (let i = 0; i < _lastResult.length; i++) {
+        let x = _lastResult[i];
+        for (let j = 0; j < _blockSize; j++) {
+            resultArray[curIndex] = Number(x & 255n);
+            x = x >> 8n;
+            curIndex++;
+        }
+    }
+
+    return resultArray;
+}
+
+
+async function saveToFile() {
+    let handle;
+    try {
+        handle = await window.showSaveFilePicker({id: 1});
+    } catch(err) {
+        return;
+    }
+
+    const writableStream = await handle.createWritable();
+
+    let data;
+    if (_resultType == 0)
+        data = getEncodedDataToSave();
+    else
+        data = new Uint8Array(_lastResult.map(Number));
+
+    await writableStream.write(data);
+    await writableStream.close();
+}
+
+
+document.addEventListener("DOMContentLoaded", () => {
+    let encodeButton = document.getElementById("encode_button");
+    let decodeButton = document.getElementById("decode_button");
+    let loadFileForEncodeButton = document.getElementById("load_from_file_for_encode");
+    let loadFileForDecodeButton = document.getElementById("load_from_file_for_decode");
+    let fileInput = document.getElementById("file_input");
+    let saveToFileButton = document.getElementById("save_to_file");
+
+    encodeButton.addEventListener("click", run);
+    decodeButton.addEventListener("click", run);
+    loadFileForEncodeButton.addEventListener("click", () => {_fileType = 0; fileInput.click()});
+    loadFileForDecodeButton.addEventListener("click", () => {_fileType = 1; fileInput.click()});
+    fileInput.addEventListener("change", setDataFromFile);
+    saveToFileButton.addEventListener("click", saveToFile);
+});
+
+        </script>
+    </head>
+    <body>
+        <div class="jumbotron">
+            <label for="rails" class="h3">Криптосистема Рабина</label>
+
+            <div class="form-group">
+                <label for="plain_or_cipher_text" class="h4">Данные</label>
+                <textarea class="form-control text-monospace" rows="4" id="plain_or_cipher_text" spellcheck="false" readonly></textarea>
+                <input type="file" id="file_input" style="display: none;" />
+                <button class="btn btn-success mt-1" id="load_from_file_for_encode">Загрузить файл для шифрования</button>
+                <button class="btn btn-success mt-1" id="load_from_file_for_decode">Загрузить файл для дешифрирования</button>
+            </div>
+        
+            <div id="options" class="form-group">
+                <div class="form-line">
+                    <div class="form-labeledinput-container">
+                        <label for="p" class="h4">p</label>
+                        <input class="form-control" id="p" />
+                    </div>
+
+                    <div class="form-labeledinput-container">
+                        <label for="q" class="h4">q</label>
+                        <input class="form-control" id="q" />
+                    </div>
+
+                    <div class="form-labeledinput-container">
+                        <label for="b" class="h4">b</label>
+                        <input class="form-control" id="b" />
+                    </div>
+                </div>
+
+                <button class="btn btn-success mt-1" id="encode_button">Шифровать</button>
+                <button class="btn btn-success mt-1" id="decode_button">Дешифрировать</button>
+            </div>
+
+            <div class="result-container">
+                <label for="plaintext" class="h4" id="resultlabel">Результат</label>
+                <textarea class="form-control text-monospace" rows="3" id="result_text" spellcheck="false" readonly=""></textarea>
+                <button class="btn btn-success mt-1" id="save_to_file">Сохранить в файл</button>
+            </div>
+        </div>
+    </body>
+
+    <style>
+        .errortext {
+            color: red;
+            display: block;
+        }
+
+        *,::after,::before{
+            box-sizing:border-box;
+        }
+
+        .form-line {
+            display: flex;
+            flex-direction: row;
+            column-gap: 10px;
+        }
+
+        h2,h3{
+            margin-top:0;
+            margin-bottom:.5rem;
+        }
+        pre{
+            font-family:SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+            font-size:1em;
+        }
+        pre{
+            margin-top:0;
+            margin-bottom:1rem;
+            overflow:auto;
+        }
+        label{
+            display:inline-block;
+            margin-bottom:.5rem;
+        }
+        button{
+            border-radius:0;
+        }
+        button:focus{
+            outline:1px dotted;
+            outline:5px auto -webkit-focus-ring-color;
+        }
+        button,input,textarea{
+            margin:0;
+            font-family:inherit;
+            font-size:inherit;
+            line-height:inherit;
+        }
+        button,input{
+            overflow:visible;
+        }
+        button{
+            text-transform:none;
+        }
+        button{
+            -webkit-appearance:button;
+        }
+        button:not(:disabled){
+            cursor:pointer;
+        }
+        input[type=radio]{
+            box-sizing:border-box;
+            padding:0;
+        }
+        textarea{
+            overflow:auto;
+            resize:vertical;
+        }
+        .h3,.h4,h2,h3{
+            margin-bottom:.5rem;
+            font-weight:500;
+            line-height:1.2;
+        }
+        h2{
+            font-size:2rem;
+        }
+        .h3,h3{
+            font-size:1.75rem;
+        }
+        .h4{
+            font-size:1.5rem;
+        }
+        pre{
+            display:block;
+            font-size:87.5%;
+            color:#212529;
+        }
+        .form-control{
+            display:block;
+            width:100%;
+            height:calc(1.5em + .75rem + 2px);
+            padding:.375rem .75rem;
+            font-size:1rem;
+            font-weight:400;
+            line-height:1.5;
+            color:#495057;
+            background-color:#fff;
+            background-clip:padding-box;
+            border:1px solid #ced4da;
+            border-radius:.25rem;
+            transition:border-color .15s ease-in-out,box-shadow .15s ease-in-out;
+        }
+        @media (prefers-reduced-motion:reduce){
+            .form-control{
+                transition:none;
+            }
+        }
+        .form-control:focus{
+            color:#495057;
+            background-color:#fff;
+            border-color:#80bdff;
+            outline:0;
+            box-shadow:0 0 0 .2rem rgba(0,123,255,.25);
+        }
+        .form-control::placeholder{
+            color:#6c757d;
+            opacity:1;
+        }
+        .form-control:disabled,.form-control[readonly]{
+            background-color:#e9ecef;
+            opacity:1;
+        }
+        textarea.form-control{
+            height:auto;
+        }
+        .form-group{
+            margin-bottom:1rem;
+        }
+        .btn{
+            display:inline-block;
+            font-weight:400;
+            color:#212529;
+            text-align:center;
+            vertical-align:middle;
+            cursor:pointer;
+            -webkit-user-select:none;
+            -moz-user-select:none;
+            -ms-user-select:none;
+            user-select:none;
+            background-color:transparent;
+            border:1px solid transparent;
+            padding:.375rem .75rem;
+            font-size:1rem;
+            line-height:1.5;
+            border-radius:.25rem;
+            transition:color .15s ease-in-out,background-color .15s ease-in-out,border-color .15s ease-in-out,box-shadow .15s ease-in-out;
+        }
+        @media (prefers-reduced-motion:reduce){
+            .btn{
+                transition:none;
+            }
+        }
+        .btn:hover{
+            color:#212529;
+            text-decoration:none;
+        }
+        .btn:focus{
+            outline:0;
+            box-shadow:0 0 0 .2rem rgba(0,123,255,.25);
+        }
+        .btn:disabled{
+            opacity:.65;
+        }
+        .btn-success{
+            color:#fff;
+            background-color:#28a745;
+            border-color:#28a745;
+        }
+        .btn-success:hover{
+            color:#fff;
+            background-color:#218838;
+            border-color:#1e7e34;
+        }
+        .btn-success:focus{
+            color:#fff;
+            background-color:#218838;
+            border-color:#1e7e34;
+            box-shadow:0 0 0 .2rem rgba(72,180,97,.5);
+        }
+        .btn-success:disabled{
+            color:#fff;
+            background-color:#28a745;
+            border-color:#28a745;
+        }
+        .btn-success:not(:disabled):not(.disabled):active{
+            color:#fff;
+            background-color:#1e7e34;
+            border-color:#1c7430;
+        }
+        .btn-success:not(:disabled):not(.disabled):active:focus{
+            box-shadow:0 0 0 .2rem rgba(72,180,97,.5);
+        }
+        .btn-dark{
+            color:#fff;
+            background-color:#343a40;
+            border-color:#343a40;
+        }
+        .btn-dark:hover{
+            color:#fff;
+            background-color:#23272b;
+            border-color:#1d2124;
+        }
+        .btn-dark:focus{
+            color:#fff;
+            background-color:#23272b;
+            border-color:#1d2124;
+            box-shadow:0 0 0 .2rem rgba(82,88,93,.5);
+        }
+        .btn-dark:disabled{
+            color:#fff;
+            background-color:#343a40;
+            border-color:#343a40;
+        }
+        .btn-dark:has(input:checked), .btn-dark:not(:disabled):not(.disabled).active,.btn-dark:not(:disabled):not(.disabled):active{
+            color:#fff;
+            background-color:#1d2124;
+            border-color:#171a1d;
+        }
+        .btn-dark:not(:disabled):not(.disabled).active:focus,.btn-dark:not(:disabled):not(.disabled):active:focus{
+            box-shadow:0 0 0 .2rem rgba(82,88,93,.5);
+        }
+        .collapse:not(.show){
+            display:none;
+        }
+        .btn-group{
+            position:relative;
+            display:-ms-inline-flexbox;
+            display:inline-flex;
+            vertical-align:middle;
+            margin-bottom: 20px;
+        }
+        .btn-group>.btn{
+            position:relative;
+            -ms-flex:1 1 auto;
+            flex:1 1 auto;
+        }
+        .btn-group>.btn:hover{
+            z-index:1;
+        }
+        .btn-group>.btn.active,.btn-group>.btn:active,.btn-group>.btn:focus{
+            z-index:1;
+        }
+        .btn-group>.btn:not(:first-child){
+            margin-left:-1px;
+        }
+        .btn-group>.btn:not(:last-child):not(.dropdown-toggle){
+            border-top-right-radius:0;
+            border-bottom-right-radius:0;
+        }
+        .btn-group>.btn:not(:first-child){
+            border-top-left-radius:0;
+            border-bottom-left-radius:0;
+        }
+        .btn-group-toggle>.btn{
+            margin-bottom:0;
+        }
+        .btn-group-toggle>.btn input[type=radio]{
+            position:absolute;
+            clip:rect(0,0,0,0);
+            pointer-events:none;
+        }
+        .jumbotron{
+            padding: 15px 1rem;
+            margin-bottom:2rem;
+            background-color:#e9ecef;
+            border-radius:.3rem;
+        }
+        @media (min-width:576px){
+            .jumbotron{
+                padding:15px 2rem;
+            }
+        }
+        .mt-1{
+            margin-top:.25rem!important;
+        }
+        .text-monospace{
+            font-family:SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace!important;
+        }
+        @media print{
+            *,::after,::before{
+                text-shadow:none!important;
+                box-shadow:none!important;
+            }
+            pre{
+                white-space:pre-wrap!important;
+            }
+            pre{
+                border:1px solid #adb5bd;
+                page-break-inside:avoid;
+            }
+            h2,h3{
+                orphans:3;
+                widows:3;
+            }
+            h2,h3{
+                page-break-after:avoid;
+            }
+        }
+        /*! CSS Used from: Embedded */
+        .h3,.h4,h2,h3{
+            font-family:Alegreya,Helvetica,Arial,sans-serif;
+            text-rendering:optimizeLegibility;
+        }
+        .h3,.h4,h2,h3{
+            font-weight:700;
+        }
+        /*! CSS Used fontfaces */
+        @font-face{
+            font-family:'Alegreya';
+            font-style:italic;
+            font-weight:500;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaSrEBBsBhlBjvfkSLk3abBFkvpkARTPlbSv5qsmSW1rw.woff2) format('woff2');
+            unicode-range:U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:italic;
+            font-weight:500;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaSrEBBsBhlBjvfkSLk3abBFkvpkARTPlbSv5qlmSW1rw.woff2) format('woff2');
+            unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:italic;
+            font-weight:500;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaSrEBBsBhlBjvfkSLk3abBFkvpkARTPlbSv5qtmSW1rw.woff2) format('woff2');
+            unicode-range:U+1F00-1FFF;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:italic;
+            font-weight:500;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaSrEBBsBhlBjvfkSLk3abBFkvpkARTPlbSv5qimSW1rw.woff2) format('woff2');
+            unicode-range:U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:italic;
+            font-weight:500;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaSrEBBsBhlBjvfkSLk3abBFkvpkARTPlbSv5qumSW1rw.woff2) format('woff2');
+            unicode-range:U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:italic;
+            font-weight:500;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaSrEBBsBhlBjvfkSLk3abBFkvpkARTPlbSv5qvmSW1rw.woff2) format('woff2');
+            unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:italic;
+            font-weight:500;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaSrEBBsBhlBjvfkSLk3abBFkvpkARTPlbSv5qhmSU.woff2) format('woff2');
+            unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:normal;
+            font-weight:400;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaBrEBBsBhlBjvfkSLsx6jx4w.woff2) format('woff2');
+            unicode-range:U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:normal;
+            font-weight:400;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaBrEBBsBhlBjvfkSLlx6jx4w.woff2) format('woff2');
+            unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:normal;
+            font-weight:400;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaBrEBBsBhlBjvfkSLtx6jx4w.woff2) format('woff2');
+            unicode-range:U+1F00-1FFF;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:normal;
+            font-weight:400;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaBrEBBsBhlBjvfkSLix6jx4w.woff2) format('woff2');
+            unicode-range:U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:normal;
+            font-weight:400;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaBrEBBsBhlBjvfkSLux6jx4w.woff2) format('woff2');
+            unicode-range:U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:normal;
+            font-weight:400;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaBrEBBsBhlBjvfkSLvx6jx4w.woff2) format('woff2');
+            unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:normal;
+            font-weight:400;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaBrEBBsBhlBjvfkSLhx6g.woff2) format('woff2');
+            unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:normal;
+            font-weight:700;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaBrEBBsBhlBjvfkSLsx6jx4w.woff2) format('woff2');
+            unicode-range:U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:normal;
+            font-weight:700;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaBrEBBsBhlBjvfkSLlx6jx4w.woff2) format('woff2');
+            unicode-range:U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:normal;
+            font-weight:700;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaBrEBBsBhlBjvfkSLtx6jx4w.woff2) format('woff2');
+            unicode-range:U+1F00-1FFF;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:normal;
+            font-weight:700;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaBrEBBsBhlBjvfkSLix6jx4w.woff2) format('woff2');
+            unicode-range:U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:normal;
+            font-weight:700;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaBrEBBsBhlBjvfkSLux6jx4w.woff2) format('woff2');
+            unicode-range:U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:normal;
+            font-weight:700;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaBrEBBsBhlBjvfkSLvx6jx4w.woff2) format('woff2');
+            unicode-range:U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+        }
+        @font-face{
+            font-family:'Alegreya';
+            font-style:normal;
+            font-weight:700;
+            src:url(https://fonts.gstatic.com/s/alegreya/v36/4UaBrEBBsBhlBjvfkSLhx6g.woff2) format('woff2');
+            unicode-range:U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+        }
+    </style>
+</html>
