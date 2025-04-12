@@ -3,7 +3,7 @@
     <head>
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <script>
-            
+
 
 let _data;
 let _blockSize;
@@ -181,7 +181,8 @@ function rabinDecode(p, q, b, data) {
         d[2] = (pypmq - qyqmp) % n;
         d[3] = n - d[2];
     
-        let m = null;
+        let m;
+        let decoded = false;
         for (let root of d) {
             if (((root - b) & 1n) == 0)
                 m = ((root - b) >> 1n) % n;
@@ -191,12 +192,15 @@ function rabinDecode(p, q, b, data) {
             if (m < 0)
                 m = m + n;
 
-            if (m < 256)
+            if (m < 256) {
+                decoded = true;
                 break;
+            }
         }
     
-        if (m == null)
-            throw new Error("Can't decode byte");
+        if (!decoded) {
+            return null;
+        }
 
         result.push(m);
     }
@@ -254,14 +258,21 @@ function run(clickEvent) {
 
     _blockSize = (log2(n) + 7) >> 3;
 
+    let result;
     if (clickEvent.target.id == "encode_button") {
+        result = rabinEncode(p, q, b, _data);
         _resultType = 0;
-        _lastResult = rabinEncode(p, q, b, _data);
     } else {
+        result = rabinDecode(p, q, b, _data);
+        if (result == null) {
+            alert("Сори гудбай! Не удалось расшифровать");
+            return;
+        }
+
         _resultType = 1;
-        _lastResult = rabinDecode(p, q, b, _data);
     }
 
+    _lastResult = result;
     let resultTextInput = document.getElementById("result_text");
     resultTextInput.value = _lastResult.join(" ");
 }
@@ -377,7 +388,6 @@ document.addEventListener("DOMContentLoaded", () => {
     fileInput.addEventListener("change", setDataFromFile);
     saveToFileButton.addEventListener("click", saveToFile);
 });
-
         </script>
     </head>
     <body>
